@@ -4,10 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.PorterDuffXfermode
+import android.graphics.PorterDuff
+import android.graphics.drawable.PictureDrawable
 import android.os.Build
-import android.os.Environment
-import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.codingblocks.cbonlineapp.CBOnlineApp
@@ -18,7 +22,6 @@ import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
-
 
 object MediaUtils {
 
@@ -55,34 +58,6 @@ object MediaUtils {
         }
 
         fileOrDirectory.delete()
-    }
-
-
-
-
-
-    //Call this when you want to play a video and pass the return type to exoplayer
-    fun getCourseVideoUri(videoUrl: String, context: Context): Uri {
-        val file = context.getExternalFilesDir(Environment.getDataDirectory().absolutePath)
-        val dataFile = File(file, "/$videoUrl/index.m3u8")
-        return Uri.parse(dataFile.toURI().toString())
-    }
-
-    fun getCourseDownloadUrls(videoUrl: String, context: Context): ArrayList<String> {
-        val videoNames = arrayListOf<String>()
-
-        val file = context.getExternalFilesDir(Environment.getDataDirectory().absolutePath)
-        val dataFile = File(file, "/$videoUrl/video.m3u8")
-
-        dataFile.forEachLine {
-            Log.i("fileName", it)
-            if (it.contains(".ts")) {
-                Log.i("fileName", it)
-                videoNames.add(it)
-            }
-        }        //Read the file above and add the ts names to videoNames
-
-        return videoNames
     }
 
     fun getYotubeVideoId(videoUrl: String): String {
@@ -125,9 +100,32 @@ object MediaUtils {
                 )
                 false
             }
-        } else { //permission is automatically granted on sdk<23 upon installation
+        } else { // permission is automatically granted on sdk<23 upon installation
             true
         }
     }
 
+    fun getBitmapFromPictureDrawable(picDrawable: PictureDrawable): Bitmap {
+        val bitmap = Bitmap.createBitmap(picDrawable.intrinsicWidth, picDrawable.intrinsicHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        picDrawable.setBounds(0, 0, canvas.width, canvas.height)
+        picDrawable.draw(canvas)
+
+        return bitmap
+    }
+
+    fun getCircularBitmap(bitmap: Bitmap): Bitmap {
+        val circlebitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(circlebitmap)
+        val paint = Paint()
+        val rect = Rect(0, 0, bitmap.width, bitmap.height)
+
+        paint.isAntiAlias = true
+        canvas.drawARGB(0, 0, 0, 0)
+        canvas.drawCircle((bitmap.width / 2).toFloat(), (bitmap.height / 2).toFloat(), (bitmap.width / 2).toFloat(), paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bitmap, rect, rect, paint)
+
+        return circlebitmap
+    }
 }

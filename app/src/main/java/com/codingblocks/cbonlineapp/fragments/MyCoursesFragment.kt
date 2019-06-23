@@ -1,41 +1,44 @@
 package com.codingblocks.cbonlineapp.fragments
 
-
+import android.annotation.TargetApi
+import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
+import android.graphics.drawable.PictureDrawable
+import android.os.Build.VERSION_CODES.N_MR1
 import android.os.Bundle
-import android.util.Log
-import android.view.*
+import android.view.LayoutInflater
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.View
+import android.view.ViewGroup
 import androidx.appcompat.widget.SearchView
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.caverock.androidsvg.SVG
 import com.codingblocks.cbonlineapp.R
-import com.codingblocks.cbonlineapp.extensions.retrofitCallback
+import com.codingblocks.cbonlineapp.activities.MyCourseActivity
 import com.codingblocks.cbonlineapp.adapters.CourseDataAdapter
-import com.codingblocks.cbonlineapp.database.AppDatabase
-import com.codingblocks.cbonlineapp.database.models.Course
 import com.codingblocks.cbonlineapp.database.models.CourseRun
-import com.codingblocks.cbonlineapp.database.models.CourseWithInstructor
-import com.codingblocks.cbonlineapp.database.models.Instructor
 import com.codingblocks.cbonlineapp.extensions.getPrefs
-import com.codingblocks.cbonlineapp.ui.HomeFragmentUi
 import com.codingblocks.cbonlineapp.extensions.observer
-import com.codingblocks.onlineapi.Clients
-import com.codingblocks.onlineapi.models.MyCourse
-import com.crashlytics.android.core.CrashlyticsCore
+import com.codingblocks.cbonlineapp.ui.HomeFragmentUi
+import com.codingblocks.cbonlineapp.util.COURSE_ID
+import com.codingblocks.cbonlineapp.util.COURSE_NAME
+import com.codingblocks.cbonlineapp.util.MediaUtils
+import com.codingblocks.cbonlineapp.util.RUN_ATTEMPT_ID
+import com.codingblocks.cbonlineapp.util.RUN_ID
+import com.codingblocks.cbonlineapp.viewmodels.HomeViewModel
 import com.ethanhua.skeleton.Skeleton
 import com.ethanhua.skeleton.SkeletonScreen
 import com.google.firebase.analytics.FirebaseAnalytics
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.jetbrains.anko.AnkoContext
 import org.jetbrains.anko.AnkoLogger
 import org.jetbrains.anko.doAsync
-import org.jetbrains.anko.info
 import org.jetbrains.anko.support.v4.ctx
-import java.util.*
-import kotlin.concurrent.thread
-
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class MyCoursesFragment : Fragment(), AnkoLogger {
 
@@ -44,24 +47,7 @@ class MyCoursesFragment : Fragment(), AnkoLogger {
     private lateinit var skeletonScreen: SkeletonScreen
     private lateinit var firebaseAnalytics: FirebaseAnalytics
 
-
-    private val database: AppDatabase by lazy {
-        AppDatabase.getInstance(context!!)
-    }
-
-    private val courseDao by lazy {
-        database.courseDao()
-    }
-    private val courseWithInstructorDao by lazy {
-        database.courseWithInstructorDao()
-    }
-    private val instructorDao by lazy {
-        database.instructorDao()
-    }
-
-    private val runDao by lazy {
-        database.courseRunDao()
-    }
+    private val viewModel by viewModel<HomeViewModel>()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -70,25 +56,29 @@ class MyCoursesFragment : Fragment(), AnkoLogger {
     ):
         View? = ui.createView(AnkoContext.create(ctx, this))
 
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        firebaseAnalytics = FirebaseAnalytics.getInstance(context!!)
+        firebaseAnalytics = FirebaseAnalytics.getInstance(requireContext())
         val params = Bundle()
         params.putString(FirebaseAnalytics.Param.ITEM_ID, getPrefs()?.SP_ONEAUTH_ID)
         params.putString(FirebaseAnalytics.Param.ITEM_NAME, "MyCourses")
         firebaseAnalytics.logEvent(FirebaseAnalytics.Event.VIEW_ITEM, params)
 
+        courseDataAdapter =
+            CourseDataAdapter(
+                ArrayList(),
+                viewModel.getCourseDao(),
+                requireContext(),
+                viewModel.getCourseWithInstructorDao(),
+                "myCourses"
+            )
+
+        setHasOptionsMenu(true)
+
         ui.allcourseText.text = getString(R.string.my_courses)
         ui.titleText.visibility = View.GONE
         ui.homeImg.visibility = View.GONE
-        courseDataAdapter =
-            CourseDataAdapter(ArrayList(), activity!!, courseWithInstructorDao, "myCourses")
         ui.viewPager.visibility = View.GONE
-
-        courseDataAdapter = CourseDataAdapter(ArrayList(), activity!!, courseWithInstructorDao, "myCourses")
-        setHasOptionsMenu(true)
-
 
         ui.rvCourses.layoutManager = LinearLayoutManager(ctx)
         ui.rvCourses.adapter = courseDataAdapter
@@ -102,146 +92,37 @@ class MyCoursesFragment : Fragment(), AnkoLogger {
             .count(4)
             .load(R.layout.item_skeleton_course_card)
             .show()
+        viewModel.fetchMyCourses()
+
         displayCourses()
 
         ui.swipeRefreshLayout.setOnRefreshListener {
-            fetchAllCourses()
+            viewModel.progress.value = true
+            skeletonScreen.show()
+            viewModel.fetchMyCourses(true)
         }
-        fetchAllCourses()
-    }
 
+        viewModel.progress.observer(viewLifecycleOwner) {
+            ui.swipeRefreshLayout.isRefreshing = it
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N_MR1)
+            createShortcut()
+    }
 
     private fun displayCourses(searchQuery: String = "") {
-        runDao.getMyRuns().observer(this) {
-
-            GlobalScope.launch(Dispatchers.Main) {
-
-                val list = withContext(Dispatchers.Default) {
-                    (it.filter { c ->
-                        (c.crEnd.toLong() * 1000) > System.currentTimeMillis() &&
-                            c.title.contains(searchQuery, true)
-                    } as ArrayList<CourseRun>)
-                }
-
-                courseDataAdapter.setData(list)
-
+        viewModel.getMyRuns().observer(viewLifecycleOwner) {
+            if (it.isNotEmpty()) {
+                skeletonScreen.hide()
+                courseDataAdapter.setData(it.filter { c ->
+                    c.title.contains(searchQuery, true) ||
+                        c.summary.contains(searchQuery, true)
+                } as ArrayList<CourseRun>)
+            } else {
+                viewModel.fetchMyCourses()
             }
         }
     }
-
-    private fun fetchAllCourses() {
-
-        Clients.onlineV2JsonApi.getMyCourses().enqueue(retrofitCallback { t, resp ->
-            skeletonScreen.hide()
-            resp?.body()?.let {
-                for (myCourses in it) {
-                    //Add Course Progress to Course Object
-                    Clients.api.getMyCourseProgress(myCourses.runAttempts?.get(0)?.id.toString())
-                        .enqueue(retrofitCallback { t, progressResponse ->
-                            progressResponse?.body().let { map ->
-                                val progress: Double = try {
-                                    map!!["percent"] as Double
-                                } catch (e: Exception) {
-                                    0.0
-                                }
-                                val course = myCourses.course?.run {
-                                    Course(
-                                        id ?: "",
-                                        title ?: "",
-                                        subtitle ?: "",
-                                        logo ?: "",
-                                        summary ?: "",
-                                        promoVideo ?: "",
-                                        difficulty ?: "",
-                                        reviewCount ?: 0,
-                                        rating ?: 0f,
-                                        slug ?: "",
-                                        coverImage ?: "",
-                                        updated_at = updatedAt,
-                                        categoryId = categoryId
-                                    )
-                                }
-                                val courseRun =
-                                    CourseRun(
-                                        myCourses.id ?: "",
-                                        myCourses.runAttempts?.get(0)?.id ?: "",
-                                        myCourses.name ?: "",
-                                        myCourses.description ?: "",
-                                        myCourses.start ?: "",
-                                        myCourses.runAttempts!![0].end ?: "",
-                                        myCourses.start ?: "",
-                                        myCourses.runAttempts!![0].end ?: "",
-                                        myCourses.price ?: "",
-                                        myCourses.mrp ?: "",
-                                        myCourses.course?.id ?: "",
-                                        myCourses.updatedAt ?: "",
-                                        progress = progress,
-                                        title = myCourses.course?.title ?: "",
-                                        premium = myCourses.runAttempts?.get(0)?.premium!!
-                                    )
-
-                                doAsync {
-                                    val updateRun = runDao.getRunById(myCourses.id ?: "")
-                                    if (updateRun == null) {
-                                        courseDao.insert(course!!)
-                                        runDao.insert(courseRun)
-                                    } else if (updateRun.progress != progress) {
-                                        courseRun.hits = updateRun.hits
-                                        info { myCourses.course?.title + "updateCourse is happening" + progress + "  " + updateRun.progress }
-                                        courseDao.update(course!!)
-                                        runDao.update(courseRun)
-                                    }
-
-                                    if (ui.swipeRefreshLayout.isRefreshing) {
-                                        ui.swipeRefreshLayout.isRefreshing = false
-                                    }
-                                    //fetch CourseInstructors
-                                    myCourses.course?.instructors?.forEachIndexed { _, it ->
-                                        Clients.onlineV2JsonApi.instructorsById(it.id!!)
-                                            .enqueue(retrofitCallback { _, response ->
-
-                                                response?.body().let { instructor ->
-                                                    thread {
-                                                        instructorDao.insert(
-                                                            Instructor(
-                                                                instructor?.id
-                                                                    ?: "",
-                                                                instructor?.name ?: "",
-                                                                instructor?.description
-                                                                    ?: "",
-                                                                instructor?.photo ?: "",
-                                                                "",
-                                                                myCourses.runAttempts!![0].id!!,
-                                                                myCourses.course!!.id
-                                                            )
-                                                        )
-                                                        Log.e(
-                                                            "TAG",
-                                                            "ID : ${instructor?.id}  Name : ${instructor?.name}"
-                                                        )
-
-                                                        myCourses.course?.let { c ->
-                                                            instructor?.let { i ->
-                                                                insertCourseAndInstructor(c, i)
-                                                            }
-                                                                ?: CrashlyticsCore.getInstance().apply {
-                                                                    setString("course", c.id)
-                                                                    log("Instructor is NULL")
-                                                                }
-                                                        }
-                                                    }
-                                                }
-                                            })
-                                    }
-                                }
-
-                            }
-                        })
-                }
-            }
-        })
-    }
-
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.home, menu)
@@ -264,24 +145,48 @@ class MyCoursesFragment : Fragment(), AnkoLogger {
         super.onCreateOptionsMenu(menu, inflater)
     }
 
+    @TargetApi(N_MR1)
+    fun createShortcut() {
 
-    private fun insertCourseAndInstructor(
-        course: MyCourse,
-        instructor: com.codingblocks.onlineapi.models.Instructor
-    ) {
+        val sM = requireContext().getSystemService(ShortcutManager::class.java)
+        val shortcutList: MutableList<ShortcutInfo> = ArrayList()
 
-        thread {
-            try {
-                courseWithInstructorDao.insert(
-                    CourseWithInstructor(
-                        course.id!!,
-                        instructor.id!!
-                    )
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Log.e("CRASH", "COURSE ID : ${course.id.toString()}")
-                Log.e("CRASH", "INSTRUCTOR ID : ${instructor.id.toString()}")
+        viewModel.getTopRun().observer(viewLifecycleOwner) {
+            doAsync {
+                it.forEachIndexed { index, courseRun ->
+                    val data = viewModel.getCourseById(courseRun.crCourseId)
+
+                    val intent = Intent(activity, MyCourseActivity::class.java).apply {
+                        action = Intent.ACTION_VIEW
+                        putExtra(COURSE_ID, courseRun.crCourseId)
+                        putExtra(RUN_ATTEMPT_ID, courseRun.crAttemptId)
+                        putExtra(COURSE_NAME, data.title)
+                        putExtra(RUN_ID, courseRun.crUid)
+                    }
+
+                    val shortcut = ShortcutInfo.Builder(requireContext(), "topcourse$index")
+                    shortcut.setIntent(intent)
+                    shortcut.setLongLabel(courseRun.title)
+                    shortcut.setShortLabel(courseRun.title)
+                    shortcut.setDisabledMessage("Login to open this")
+
+                    MediaUtils.okHttpClient.newCall(Request.Builder().url(data.logo).build())
+                        .execute().body()?.let {
+                            with(SVG.getFromInputStream(it.byteStream())) {
+                                val picDrawable = PictureDrawable(
+                                    this.renderToPicture(
+                                        400, 400
+                                    )
+                                )
+                                val bitmap =
+                                    MediaUtils.getBitmapFromPictureDrawable(picDrawable)
+                                val circularBitmap = MediaUtils.getCircularBitmap(bitmap)
+                                shortcut.setIcon(Icon.createWithBitmap(circularBitmap))
+                                shortcutList.add(index, shortcut.build())
+                            }
+                        }
+                }
+                sM?.dynamicShortcuts = shortcutList
             }
         }
     }

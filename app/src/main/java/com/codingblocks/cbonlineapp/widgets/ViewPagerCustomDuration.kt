@@ -1,4 +1,4 @@
-package com.codingblocks.cbonlineapp.util
+package com.codingblocks.cbonlineapp.widgets
 
 import android.content.Context
 import android.util.AttributeSet
@@ -36,7 +36,6 @@ class ViewPagerCustomDuration : ViewPager {
             scroller.set(this, mScroller)
         } catch (ignored: Exception) {
         }
-
     }
 
     /*

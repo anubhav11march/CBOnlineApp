@@ -7,18 +7,14 @@ import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import android.widget.RelativeLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.Observer
 import com.codingblocks.cbonlineapp.BuildConfig
 import com.codingblocks.cbonlineapp.R
 import com.codingblocks.cbonlineapp.adapters.TabLayoutAdapter
-import com.codingblocks.cbonlineapp.database.AppDatabase
-import com.codingblocks.cbonlineapp.database.models.CourseRun
-import com.codingblocks.cbonlineapp.database.models.DoubtsModel
-import com.codingblocks.cbonlineapp.database.models.NotesModel
+import com.codingblocks.cbonlineapp.extensions.observer
 import com.codingblocks.cbonlineapp.extensions.pageChangeCallback
-import com.codingblocks.cbonlineapp.extensions.retrofitCallback
 import com.codingblocks.cbonlineapp.fragments.VideoDoubtFragment
 import com.codingblocks.cbonlineapp.fragments.VideoNotesFragment
 import com.codingblocks.cbonlineapp.util.CONTENT_ID
@@ -28,17 +24,18 @@ import com.codingblocks.cbonlineapp.util.RUN_ATTEMPT_ID
 import com.codingblocks.cbonlineapp.util.SECTION_ID
 import com.codingblocks.cbonlineapp.util.VIDEO_ID
 import com.codingblocks.cbonlineapp.util.VdoPlayerControlView
-import com.codingblocks.onlineapi.Clients
-import com.codingblocks.onlineapi.models.Contents
+import com.codingblocks.cbonlineapp.viewmodels.VideoPlayerViewModel
+import com.codingblocks.onlineapi.models.ContentsId
 import com.codingblocks.onlineapi.models.DoubtsJsonApi
 import com.codingblocks.onlineapi.models.Notes
-import com.codingblocks.onlineapi.models.RunAttemptsModel
+import com.codingblocks.onlineapi.models.RunAttemptsId
 import com.google.android.youtube.player.YouTubeInitializationResult
 import com.google.android.youtube.player.YouTubePlayer
 import com.google.android.youtube.player.YouTubePlayerSupportFragment
 import com.vdocipher.aegis.media.ErrorDescription
 import com.vdocipher.aegis.media.Track
 import com.vdocipher.aegis.player.VdoPlayer
+import com.vdocipher.aegis.player.VdoPlayer.PlayerHost.VIDEO_STRETCH_MODE_MAINTAIN_ASPECT_RATIO
 import com.vdocipher.aegis.player.VdoPlayerFragment
 import io.github.inflationx.viewpump.ViewPumpContextWrapper
 import kotlinx.android.synthetic.main.activity_video_player.displayYoutubeVideo
@@ -54,42 +51,36 @@ import kotlinx.android.synthetic.main.doubt_dialog.view.okBtn
 import kotlinx.android.synthetic.main.doubt_dialog.view.title
 import kotlinx.android.synthetic.main.doubt_dialog.view.titleLayout
 import org.jetbrains.anko.AnkoLogger
-import org.jetbrains.anko.info
 import org.jetbrains.anko.toast
-import kotlin.concurrent.thread
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class VideoPlayerActivity : AppCompatActivity(),
     OnItemClickListener, AnkoLogger,
     VdoPlayer.InitializationListener {
+
+    private val attemptId by lazy {
+        intent.getStringExtra(RUN_ATTEMPT_ID)
+    }
+    private val contentId by lazy {
+        intent.getStringExtra(CONTENT_ID)
+    }
+    private val sectionId by lazy {
+        intent.getStringExtra(SECTION_ID) ?: ""
+    }
+    private val videoId by lazy {
+        intent.getStringExtra(VIDEO_ID)
+    }
+    private val download: Boolean by lazy {
+        intent.getBooleanExtra(DOWNLOADED, false)
+    }
+
     private var youtubePlayer: YouTubePlayer? = null
     private lateinit var youtubePlayerInit: YouTubePlayer.OnInitializedListener
     private var playerControlView: VdoPlayerControlView? = null
     private lateinit var playerFragment: VdoPlayerFragment
     private var videoPlayer: VdoPlayer? = null
-    private var mOtp: String? = null
-    private var mPlaybackInfo: String? = null
-    private lateinit var attemptId: String
-    private lateinit var contentId: String
-    private lateinit var sectionId: String
-    private lateinit var videoId: String
-    private var download: Boolean = false
-    private var playWhenReady = false
-    private var currentOrientation: Int = 0
-    private val database: AppDatabase by lazy {
-        AppDatabase.getInstance(this)
-    }
-    private val doubtsDao by lazy {
-        database.doubtsDao()
-    }
-    private val notesDao by lazy {
-        database.notesDao()
-    }
-    private val courseDao by lazy {
-        database.courseDao()
-    }
-    private val runDao by lazy {
-        database.courseRunDao()
-    }
+
+    private val viewModel by viewModel<VideoPlayerViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,27 +92,23 @@ class VideoPlayerActivity : AppCompatActivity(),
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         )
-        currentOrientation = resources.configuration.orientation
-
-        setupUI()
-
+        viewModel.currentOrientation = resources.configuration.orientation
+        if (savedInstanceState == null) {
+            setupUI()
+        }
     }
 
     private fun setupUI() {
-        videoId = intent.getStringExtra(VIDEO_ID)
         val youtubeUrl = intent.getStringExtra("videoUrl")
-        attemptId = intent.getStringExtra(RUN_ATTEMPT_ID)
-        contentId = intent.getStringExtra(CONTENT_ID)
-        download = intent.getBooleanExtra(DOWNLOADED, false)
 
         if (youtubeUrl != null) {
             displayYoutubeVideo.view?.visibility = View.VISIBLE
             setupYoutubePlayer(youtubeUrl)
         } else {
-            sectionId = intent.getStringExtra(SECTION_ID)?:""
             displayYoutubeVideo.view?.visibility = View.GONE
             videoContainer.visibility = View.VISIBLE
             playerFragment = fragmentManager.findFragmentById(R.id.videoView) as VdoPlayerFragment
+            playerFragment.videoStretchMode = VIDEO_STRETCH_MODE_MAINTAIN_ASPECT_RATIO
             playerControlView = findViewById(R.id.player_control_view)
             showControls(false)
 
@@ -133,7 +120,6 @@ class VideoPlayerActivity : AppCompatActivity(),
         }
         setupViewPager(attemptId)
     }
-
 
     private fun setupViewPager(attemptId: String) {
         val adapter = TabLayoutAdapter(supportFragmentManager)
@@ -154,12 +140,12 @@ class VideoPlayerActivity : AppCompatActivity(),
                         }
                         1 -> {
                             videoFab.setOnClickListener {
-                                val notePos: Double =
+                                val notePos: Double? =
                                     if (displayYoutubeVideo.view?.visibility == View.VISIBLE)
-                                        (youtubePlayer?.currentTimeMillis!! / 1000).toDouble()
+                                        (youtubePlayer?.currentTimeMillis?.div(1000))?.toDouble()
                                     else
-                                        (videoPlayer?.currentTime!! / 1000).toDouble()
-                                createNote(notePos)
+                                        (videoPlayer?.currentTime?.div(1000))?.toDouble()
+                                notePos?.let { value -> createNote(value) }
                             }
                         }
                     }
@@ -191,22 +177,18 @@ class VideoPlayerActivity : AppCompatActivity(),
         }
         val youTubePlayerSupportFragment =
             supportFragmentManager.findFragmentById(R.id.displayYoutubeVideo) as YouTubePlayerSupportFragment?
-        youTubePlayerSupportFragment!!.initialize(BuildConfig.YOUTUBE_KEY, youtubePlayerInit)
+        youTubePlayerSupportFragment?.initialize(BuildConfig.YOUTUBE_KEY, youtubePlayerInit)
     }
 
     private fun setupVideoView() {
-        Clients.api.getOtp(videoId, sectionId, attemptId)
-            .enqueue(retrofitCallback { throwable, response ->
-                response?.let {
-                    if (it.isSuccessful) {
-                        it.body()?.let {
-                            mOtp = it.get("otp")?.asString
-                            mPlaybackInfo = it.get("playbackInfo")?.asString
-                            initializePlayer()
-                        }
-                    }
-                }
-            })
+        viewModel.getOtpProgress.observer(this) {
+            if (it) {
+                initializePlayer()
+            } else
+                toast("there was some error with starting feed, try again")
+        }
+
+        viewModel.getOtp(videoId, sectionId, attemptId)
     }
 
     private fun initializePlayer() {
@@ -230,8 +212,8 @@ class VideoPlayerActivity : AppCompatActivity(),
             VdoPlayer.VdoInitParams.createParamsForOffline(videoId)
         } else {
             VdoPlayer.VdoInitParams.Builder()
-                .setOtp(mOtp)
-                .setPlaybackInfo(mPlaybackInfo)
+                .setOtp(viewModel.mOtp)
+                .setPlaybackInfo(viewModel.mPlaybackInfo)
                 .setPreferredCaptionsLanguage("en")
                 .build()
         }
@@ -246,9 +228,7 @@ class VideoPlayerActivity : AppCompatActivity(),
         if (show) {
             playerControlView?.show()
         } else {
-            playerControlView?.let {
-                it.hide()
-            }
+            playerControlView?.hide()
         }
     }
 
@@ -266,121 +246,99 @@ class VideoPlayerActivity : AppCompatActivity(),
     }
 
     private fun createDoubt() {
-        runDao.getRunByAtemptId(attemptId).observe(this, Observer<CourseRun> {
-            val categoryId = courseDao.getCourse(it?.crCourseId!!).categoryId
+        viewModel.getRunByAtemptId(attemptId).observer(this) {
+            val categoryId = viewModel.getCourseById(it.crCourseId).categoryId
             val doubtDialog = AlertDialog.Builder(this).create()
             val doubtView = layoutInflater.inflate(R.layout.doubt_dialog, null)
-            doubtView.cancelBtn.setOnClickListener {
-                doubtDialog.dismiss()
-            }
-            doubtView.okBtn.setOnClickListener {
-                if (doubtView.titleLayout.editText!!.text.length < 15 || doubtView.titleLayout.editText!!.text.isEmpty()) {
-                    doubtView.titleLayout.error = getString(R.string.doubt_title_error)
-                    return@setOnClickListener
-                } else if (doubtView.descriptionLayout.editText!!.text.length < 20 || doubtView.descriptionLayout.editText!!.text.isEmpty()) {
-                    doubtView.descriptionLayout.error = getString(R.string.doubt_description_error)
-                    doubtView.titleLayout.error = ""
-                } else {
-                    doubtView.descriptionLayout.error = ""
-                    val doubt = DoubtsJsonApi()
-                    doubt.body = doubtView.descriptionLayout.editText!!.text.toString()
-                    doubt.title = doubtView.titleLayout.editText!!.text.toString()
-                    doubt.category = categoryId
-                    val runAttempts = RunAttemptsModel() // type run-attempts
-                    val contents = Contents() // type contents
-                    runAttempts.id = attemptId
-                    contents.id = contentId
-                    doubt.status = "PENDING"
-                    doubt.postrunAttempt = runAttempts
-                    doubt.content = contents
-                    Clients.onlineV2JsonApi.createDoubt(doubt)
-                        .enqueue(retrofitCallback { throwable, response ->
-                            response?.body().let {
-                                doubtDialog.dismiss()
-                                thread {
-                                    doubtsDao.insert(
-                                        DoubtsModel(
-                                            it!!.id
-                                                ?: "", it.title, it.body, it.content?.id
-                                                ?: "", it.status, it.runAttempt?.id ?: ""
-                                        )
-                                    )
-                                }
-                            }
-                        })
-                }
-            }
 
-            doubtDialog.window.setBackgroundDrawableResource(android.R.color.transparent)
-            doubtDialog.setView(doubtView)
-            doubtDialog.setCancelable(false)
-            doubtDialog.show()
-        })
+            if (!it.premium) {
+                val cannotCreateDialog = AlertDialog.Builder(this).create()
+                val cannotCreateView = layoutInflater.inflate(R.layout.cannot_create_doubt_dialog, null)
+                cannotCreateView.okBtn.setOnClickListener {
+                    cannotCreateDialog.dismiss()
+                }
+                cannotCreateDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+                cannotCreateDialog.setView(cannotCreateView)
+                cannotCreateDialog.setCancelable(false)
+                cannotCreateDialog.show()
+            } else {
+                doubtView.cancelBtn.setOnClickListener {
+                    doubtDialog.dismiss()
+                }
+                doubtView.okBtn.setOnClickListener {
+                    if (doubtView.titleLayout.editText?.text.toString().length < 15 || doubtView.titleLayout.editText?.text.toString().isEmpty()) {
+                        doubtView.titleLayout.error = getString(R.string.doubt_title_error)
+                        return@setOnClickListener
+                    } else if (doubtView.descriptionLayout.editText?.text.toString().length < 20 || doubtView.descriptionLayout.editText?.text.toString().isEmpty()) {
+                        doubtView.descriptionLayout.error = getString(R.string.doubt_description_error)
+                        doubtView.titleLayout.error = ""
+                    } else {
+                        doubtView.descriptionLayout.error = ""
+                        val doubt = DoubtsJsonApi()
+                        doubt.body = doubtView.descriptionLayout.editText?.text.toString()
+                        doubt.title = doubtView.titleLayout.editText?.text.toString()
+                        doubt.category = categoryId
+                        doubt.status = "PENDING"
+                        doubt.postrunAttempt = RunAttemptsId(attemptId)
+                        doubt.contents = ContentsId(contentId)
+                        viewModel.createDoubtProgress.observer(this) { progress ->
+                            if (progress)
+                                doubtDialog.dismiss()
+                            else {
+                                doubtDialog.dismiss()
+                                toast("there was some error please try again")
+                            }
+                        }
+                        viewModel.createDoubt(doubt, attemptId)
+                    }
+                }
+
+                doubtDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+                doubtDialog.setView(doubtView)
+                doubtDialog.setCancelable(false)
+                doubtDialog.show()
+            }
+        }
     }
 
     private fun createNote(notePos: Double) {
         val noteDialog = AlertDialog.Builder(this).create()
         val noteView = layoutInflater.inflate(R.layout.doubt_dialog, null)
         noteView.descriptionLayout.visibility = View.GONE
-        noteView.title.text = "Create A Note"
-        noteView.okBtn.text = "Create Note"
-
+        noteView.title.text = resources.getString(R.string.create_a_note)
+        noteView.okBtn.text = resources.getString(R.string.create_note)
 
         noteView.cancelBtn.setOnClickListener {
             noteDialog.dismiss()
         }
         noteView.okBtn.setOnClickListener {
-            if (noteView.titleLayout.editText!!.text.isEmpty()) {
+            if (noteView.titleLayout.editText?.text.toString().isEmpty()) {
                 noteView.titleLayout.error = "Note Cannot Be Empty."
                 return@setOnClickListener
             } else {
                 noteView.descriptionLayout.error = ""
                 val note = Notes()
-                note.text = noteView.titleLayout.editText!!.text.toString()
+                note.text = noteView.titleLayout.editText?.text.toString()
                 note.duration = notePos
-                val runAttempts = RunAttemptsModel() // type run_attempts
-                val contents = Contents() // type contents
-                runAttempts.id = attemptId
-                contents.id = contentId
-                note.runAttempt = runAttempts
-                note.content = contents
-                Clients.onlineV2JsonApi.createNote(note)
-                    .enqueue(retrofitCallback { throwable, response ->
-                        response?.body().let {
-                            noteDialog.dismiss()
-                            if (response?.isSuccessful!!)
-                                try {
-                                    notesDao.insert(
-                                        NotesModel(
-                                            it!!.id
-                                                ?: "",
-                                            it.duration ?: 0.0,
-                                            it.text ?: "",
-                                            it.content?.id
-                                                ?: "",
-                                            attemptId,
-                                            it.createdAt
-                                                ?: "",
-                                            it.deletedAt
-                                                ?: ""
-                                        )
-                                    )
-                                } catch (e: Exception) {
-                                    info { "error" + e.localizedMessage }
-                                }
-                        }
-                    })
+                note.content = ContentsId(contentId)
+                note.runAttempt = RunAttemptsId(attemptId)
+
+                viewModel.createNoteProgress.observer(this) {
+                    if (it) noteDialog.dismiss()
+                    else toast("there was some errror with creating notes, try again")
+                }
+                viewModel.createNote(note, attemptId)
             }
         }
 
-        noteDialog.window.setBackgroundDrawableResource(android.R.color.transparent)
+        noteDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         noteDialog.setView(noteView)
         noteDialog.setCancelable(false)
         noteDialog.show()
     }
 
     override fun onBackPressed() {
-        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+        if (viewModel.currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
             showFullScreen(false)
             playerControlView?.setFullscreenState(false)
         } else {
@@ -389,22 +347,29 @@ class VideoPlayerActivity : AppCompatActivity(),
     }
 
     private fun showFullScreen(show: Boolean) {
+        showSystemUi(show)
         requestedOrientation = if (show) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            )
             // go to landscape orientation for fullscreen mode
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
             // go to portrait orientation
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
         }
     }
 
     private fun showSystemUi(show: Boolean) {
-        if (!show) {
+        if (show) {
             window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_FULLSCREEN)
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
         } else {
             window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
@@ -443,7 +408,7 @@ class VideoPlayerActivity : AppCompatActivity(),
         }
 
         override fun onPlayerStateChanged(playWhenReady: Boolean, playbackState: Int) {
-            this@VideoPlayerActivity.playWhenReady = playWhenReady
+            viewModel.playWhenReady = playWhenReady
         }
     }
     private val fullscreenToggleListener =
@@ -453,17 +418,17 @@ class VideoPlayerActivity : AppCompatActivity(),
         }
     private val visibilityListener =
         VdoPlayerControlView.ControllerVisibilityListener { visibility ->
-            if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+            if (viewModel.currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
                 if (visibility != View.VISIBLE) {
-                    showSystemUi(false)
+//                    showSystemUi(false)
                 }
             }
         }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         val newOrientation = newConfig.orientation
-        val oldOrientation = currentOrientation
-        currentOrientation = newOrientation
+        val oldOrientation = viewModel.currentOrientation
+        viewModel.currentOrientation = newOrientation
         super.onConfigurationChanged(newConfig)
         when (newOrientation) {
             oldOrientation -> {
@@ -473,8 +438,17 @@ class VideoPlayerActivity : AppCompatActivity(),
                 player_tabs.visibility = View.GONE
                 pagerFrame.visibility = View.GONE
                 playerControlView?.fitsSystemWindows = true
+
+                if (::playerFragment.isInitialized) {
+                    val paramsFragment: RelativeLayout.LayoutParams =
+                        playerFragment.view?.layoutParams as RelativeLayout.LayoutParams
+                    paramsFragment.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM)
+                    paramsFragment.addRule(RelativeLayout.ALIGN_PARENT_TOP)
+                    paramsFragment.addRule(RelativeLayout.ALIGN_PARENT_START)
+                    paramsFragment.addRule(RelativeLayout.ALIGN_PARENT_END)
+                }
+
                 // hide system windows
-                showSystemUi(false)
                 showControls(false)
             }
             else -> {
@@ -483,9 +457,17 @@ class VideoPlayerActivity : AppCompatActivity(),
                 pagerFrame.visibility = View.VISIBLE
 
                 playerControlView?.fitsSystemWindows = false
+
+                if (::playerFragment.isInitialized) {
+                    val paramsFragment: RelativeLayout.LayoutParams =
+                        playerFragment.view?.layoutParams as RelativeLayout.LayoutParams
+                    paramsFragment.removeRule(RelativeLayout.ALIGN_PARENT_BOTTOM)
+                    paramsFragment.removeRule(RelativeLayout.ALIGN_PARENT_TOP)
+                    paramsFragment.removeRule(RelativeLayout.ALIGN_PARENT_START)
+                    paramsFragment.removeRule(RelativeLayout.ALIGN_PARENT_END)
+                }
                 playerControlView?.setPadding(0, 0, 0, 0)
                 // show system windows
-                showSystemUi(true)
             }
         }
     }

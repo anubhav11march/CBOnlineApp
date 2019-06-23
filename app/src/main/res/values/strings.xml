@@ -1,6 +1,5 @@
 <resources>
     <string name="app_name">Coding Blocks Online</string>
-    <string name="title_activity_home">HomeActivity</string>
     <string name="navigation_drawer_open">Open navigation drawer</string>
     <string name="navigation_drawer_close">Close navigation drawer</string>
     <string name="all_courses">All Courses</string>
@@ -9,6 +8,7 @@
     <string name="recommended_courses">Recommended Courses</string>
     <string name="summary">Summary</string>
     <string name="student_feedback">Student Feedback</string>
+    <string name="topics_covered">Major Topics Covered</string>
 
     <!-- TODO: Remove or change this placeholder text -->
     <string name="title_activity_my_course">MyCourseActivity</string>
@@ -47,6 +47,7 @@
     <string name="hint_title">Title</string>
     <string name="doubt_title">Ask A Doubt</string>
     <string name="doubt_btn">Post Doubt</string>
+    <string name="cannot_create_doubt">Doubts cannot be created in Trials!</string>
     <string name="showComments">Show Comments</string>
     <string name="hideComments">Hide Comments</string>
     <string name="empty_doubts_text">No doubts yet. Ask one?</string>
@@ -93,4 +94,17 @@
     <string name="dehradun_center">DEHRADUN CENTER</string>
     <string name="our_centres">OUR CENTRES</string>
     <string name="contact">Contact</string>
+    <string name="mcq">MCQ</string>
+    <string name="notifications">Notifications</string>
+    <string name="search_courses">Search Courses</string>
+    <string name="logout">Logout</string>
+    <string name="create_a_note">Create a Note</string>
+    <string name="create_note">Create Note</string>
+    <string name="leaderboard_emptyView">Leaderboard not available for this course!!</string>
+    <string name="quiz">• Sign in to play the contest from 30th May 2019 to 14th July 2019.\n• For each match, make three predictions - guess the winning team, score of winning team and total number of sixes in the match.\n• Predictions once made cannot be changed or modified.\n• For each match, Top predictors with correct daily prediction will win the daily points. A lucky draw will be done in case of a tie.\n• Coding Blocks decision will be final in case of any discrepency.
+</string>
+    <string name="clean_dialog_title">You have reached your data limit!</string>
+    <string name="clean_dialog_description">If you want to continue with the download, Please clear the oldest download.</string>
+    <string name="clean_dialog_okBtn">Clear Oldest Download</string>
+    <string name="clean_dialog_cancelBtn">Cancel Current Download</string>
 </resources>

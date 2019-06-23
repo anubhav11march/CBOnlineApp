@@ -7,18 +7,17 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Environment
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.codingblocks.cbonlineapp.R
 import com.codingblocks.cbonlineapp.activities.VideoPlayerActivity
-import com.codingblocks.cbonlineapp.database.AppDatabase
 import com.codingblocks.cbonlineapp.database.ContentDao
 import com.codingblocks.cbonlineapp.extensions.retrofitCallback
-import com.codingblocks.cbonlineapp.util.ATTEMPT_ID
+import com.codingblocks.cbonlineapp.util.RUN_ATTEMPT_ID
 import com.codingblocks.cbonlineapp.util.CONTENT_ID
 import com.codingblocks.cbonlineapp.util.DOWNLOADED
 import com.codingblocks.cbonlineapp.util.LECTURE_CONTENT_ID
 import com.codingblocks.cbonlineapp.util.MediaUtils
-import com.codingblocks.cbonlineapp.util.RUN_ATTEMPT_ID
 import com.codingblocks.cbonlineapp.util.SECTION_ID
 import com.codingblocks.cbonlineapp.util.VIDEO_ID
 import com.codingblocks.onlineapi.Clients
@@ -31,6 +30,7 @@ import com.vdocipher.aegis.offline.OptionsDownloader
 import com.vdocipher.aegis.offline.VdoDownloadManager
 import org.jetbrains.anko.AnkoLogger
 import org.jetbrains.anko.doAsync
+import org.koin.android.ext.android.inject
 import java.io.File
 
 class DownloadService : IntentService("Download Service"), AnkoLogger,
@@ -38,11 +38,10 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
 
     lateinit var attemptId: String
     lateinit var contentId: String
-    lateinit var sectionId: String
+    private lateinit var sectionId: String
     private lateinit var videoId: String
     lateinit var lectureContentId: String
-    lateinit var dataId: String
-
+    private lateinit var dataId: String
 
     private val notificationManager by lazy {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -59,27 +58,24 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
             .setOngoing(true) // THIS is the important line
             .setAutoCancel(false)
     }
-    private lateinit var database: AppDatabase
-    private lateinit var contentDao: ContentDao
+    private val contentDao: ContentDao by inject()
 
     override fun onHandleIntent(intent: Intent) {
         val title = intent.getStringExtra("title")
         dataId = intent.getStringExtra("id")
         notificationBuilder.setContentTitle(title)
-        database = AppDatabase.getInstance(this)
-        contentDao = database.contentDao()
         notificationManager.notify(0, notificationBuilder.build())
         videoId = intent.getStringExtra(VIDEO_ID)
-        attemptId = intent.getStringExtra(ATTEMPT_ID)
+        attemptId = intent.getStringExtra(RUN_ATTEMPT_ID)
         sectionId = intent.getStringExtra(SECTION_ID)
         contentId = intent.getStringExtra(CONTENT_ID)
         lectureContentId = intent.getStringExtra(LECTURE_CONTENT_ID)
 
         Clients.api.getOtp(videoId, sectionId, attemptId, true)
             .enqueue(retrofitCallback { _, response ->
-                response?.let {
-                    if (it.isSuccessful) {
-                        it.body()?.let {
+                response?.let { json ->
+                    if (json.isSuccessful) {
+                        json.body()?.let {
                             val mOtp = it.get("otp").asString
                             val mPlaybackInfo = it.get("playbackInfo").asString
                             initializeDownload(mOtp, mPlaybackInfo, videoId)
@@ -120,12 +116,12 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
 
                 override fun onOptionsNotReceived(errDesc: ErrorDescription) {
                     // there was an error downloading the available options
-                    val errMsg = "onOptionsNotReceived : $errDesc"
+                    Log.e("Service Error", "onOptionsNotReceived : $errDesc")
                 }
             })
     }
 
-    //function to update progress according to download progress
+    // function to update progress according to download progress
     private fun sendNotification(download: Int) {
         notificationBuilder.setProgress(100, download, false)
         notificationBuilder.setContentText("Downloaded $download %")
@@ -137,7 +133,7 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
             contentDao.updateContent(dataId, lectureContentId, "true")
         }
         val intent = Intent(this, VideoPlayerActivity::class.java)
-        intent.putExtra(VIDEO_ID,videoId)
+        intent.putExtra(VIDEO_ID, videoId)
         intent.putExtra(RUN_ATTEMPT_ID, attemptId)
         intent.putExtra(CONTENT_ID, contentId)
         intent.putExtra(DOWNLOADED, true)
@@ -168,7 +164,6 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
         notificationBuilder.setOngoing(false)
         notificationBuilder.setContentText("Download Failed")
         notificationManager.notify(0, notificationBuilder.build())
-
     }
 
     override fun onQueued(p0: String?, p1: DownloadStatus?) {
@@ -182,4 +177,3 @@ class DownloadService : IntentService("Download Service"), AnkoLogger,
         notificationManager.cancel(0)
     }
 }
-

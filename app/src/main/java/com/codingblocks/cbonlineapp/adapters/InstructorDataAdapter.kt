@@ -18,7 +18,6 @@ class InstructorDataAdapter(private var instructorData: ArrayList<Instructor>?) 
         notifyDataSetChanged()
     }
 
-
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): InstructorViewHolder {
         return InstructorViewHolder(ui.createView(AnkoContext.create(parent.context, parent)))
     }
@@ -36,10 +35,7 @@ class InstructorDataAdapter(private var instructorData: ArrayList<Instructor>?) 
         fun bindView(instructor: Instructor) {
             ui.instructorTitle.text = instructor.name
             ui.instructorDescription.text = instructor.description
-            Picasso.get().load(instructor.photo).placeholder(R.drawable.defaultavatar).fit().into(ui.instructorImgView)
-
+            Picasso.with(itemView.context).load(instructor.photo).placeholder(R.drawable.defaultavatar).fit().into(ui.instructorImgView)
         }
-
     }
-
 }
